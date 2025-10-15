@@ -685,15 +685,16 @@ with shared.gradio_root:
 
                 with gr.Row():
                     refresh_files = gr.Button(label='Refresh', value='\U0001f504 Refresh All Files', variant='secondary', elem_classes='refresh_button')
-            
-            with gr.Tab(label='Video (Image-to-Video)'):
+
+            with gr.Tab(label='Video (Image-to-Video)') as video_tab:
                 gr.HTML('<a href="https://github.com/lllyasviel/Fooocus/discussions/1905" target="_blank">\U0001F4D4 Documentation</a>')
                 video_input_image = grh.Image(label='Input Image', source='upload', type='numpy', show_label=True)
                 video_motion_bucket_id = gr.Slider(label='Motion Bucket ID', minimum=1, maximum=1023, step=1, value=127)
                 video_fps = gr.Slider(label='Frames per second', minimum=1, maximum=120, step=1, value=6)
                 video_augmentation_level = gr.Slider(label='Augmentation Level', minimum=0.0, maximum=10.0, step=0.01, value=0.0)
-                video_enabled = gr.Checkbox(label='Enable Video Generation', value=False, visible=False) # Hidden but used to trigger video pipeline
+                video_enabled = gr.Checkbox(label='Enable Video Generation', value=False, visible=False)
                 video_input_image.upload(lambda: gr.update(value=True), outputs=video_enabled, queue=False)
+                video_tab.select(lambda: 'video', outputs=current_tab, queue=False, _js="() => {viewer_to_bottom();}", show_progress=False)
 
             with gr.Tab(label='Advanced'):
                 guidance_scale = gr.Slider(label='Guidance Scale', minimum=1.0, maximum=30.0, step=0.01,
@@ -994,7 +995,6 @@ with shared.gradio_root:
         ctrls += [base_model, refiner_model, refiner_switch] + lora_ctrls
         ctrls += [input_image_checkbox, current_tab]
         ctrls += [uov_method, uov_input_image]
-        ctrls += [video_input_image, video_motion_bucket_id, video_fps, video_augmentation_level, video_enabled]
         ctrls += [outpaint_selections, inpaint_input_image, inpaint_additional_prompt, inpaint_mask_image]
         ctrls += [disable_preview, disable_intermediate_results, disable_seed_increment, black_out_nsfw]
         ctrls += [adm_scaler_positive, adm_scaler_negative, adm_scaler_end, adaptive_cfg, clip_skip]
@@ -1017,6 +1017,7 @@ with shared.gradio_root:
                   enhance_input_image, enhance_checkbox, enhance_uov_method, enhance_uov_processing_order,
                   enhance_uov_prompt_type]
         ctrls += enhance_ctrls
+        ctrls += [video_input_image, video_motion_bucket_id, video_fps, video_augmentation_level, video_enabled]
 
         def parse_meta(raw_prompt_txt, is_generating):
             loaded_json = None

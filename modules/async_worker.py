@@ -26,6 +26,18 @@ class AsyncTask:
             return
 
         args.reverse()
+
+        self.video_enabled = args.pop()
+        self.video_augmentation_level = args.pop()
+        self.video_fps = args.pop()
+        self.video_motion_bucket_id = args.pop()
+        self.video_input_image = args.pop()
+
+        self.video_enabled = args.pop()
+        self.video_augmentation_level = args.pop()
+        self.video_fps = args.pop()
+        self.video_motion_bucket_id = args.pop()
+        self.video_input_image = args.pop()
         self.generate_image_grid = args.pop()
         self.prompt = args.pop()
         self.negative_prompt = args.pop()
@@ -1069,6 +1081,91 @@ def worker():
     @torch.no_grad()
     @torch.inference_mode()
     def handler(async_task: AsyncTask):
+        # Video Pipeline Start
+        if async_task.current_tab == 'video' and async_task.video_input_image is not None:
+            print("Starting video generation pipeline.")
+            processing_start_time = time.perf_counter()
+            try:
+                # Necessary imports
+                from ldm_patched.contrib.external_video_model import find_svd, load_video_model, encode_video_additional_options
+                import numpy as np
+                import torch
+
+                progressbar(async_task, 1, 'Finding SVD model...')
+                svd_filename = find_svd()
+                if svd_filename is None:
+                    print("SVD model (svd_xt.safetensors, etc.) not found in checkpoints folder.")
+                    raise FileNotFoundError("SVD model not found. Please download svd_xt.safetensors and place it in the models/checkpoints folder.")
+
+                progressbar(async_task, 5, 'Loading video model...')
+                model_video = load_video_model(svd_filename)
+                
+                progressbar(async_task, 10, 'Loading other models...')
+                pipeline.refresh_everything(refiner_model_name='None', base_model_name=async_task.base_model_name, loras=[], vae_name=async_task.vae_name)
+                vae = pipeline.final_vae
+                
+                # SVD uses its own CLIP Vision encoder, let's load it.
+                from modules.patch import load_clip_vision
+                clip_vision = load_clip_vision()
+                
+                init_image = core.numpy_to_pytorch(async_task.video_input_image)
+                H, W = init_image.shape[2], init_image.shape[3]
+                
+                progressbar(async_task, 20, 'Encoding initial frame...')
+                # The number of frames for SVD is small, 14 or 25 are common values. We'll use 25.
+                video_frames = 25
+                positive_cond, negative_cond, latent_image = encode_video_additional_options(
+                    clip_vision, init_image, vae, W, H, video_frames, 
+                    async_task.video_motion_bucket_id, 
+                    async_task.video_fps, 
+                    async_task.video_augmentation_level
+                )
+
+                progressbar(async_task, 30, f'Sampling {video_frames} frames...')
+                
+                initial_latent = torch.zeros_like(latent_image)
+                initial_latent = torch.cat([latent_image, initial_latent], dim=1)
+                
+                def callback(step, x0, x, total_steps, y):
+                    if step == 0:
+                        async_task.callback_steps = 0
+                    # Calculate progress based on the sampling phase, which starts after 30%
+                    async_task.callback_steps += (100 - 30) / float(total_steps)
+                    async_task.yields.append(['preview', (
+                        int(30 + async_task.callback_steps),
+                        f'Sampling video step {step + 1}/{total_steps}...', y)])
+
+                sampled_latent = core.ksampler(
+                    model=model_video,
+                    seed=async_task.seed,
+                    steps=video_frames,
+                    cfg=2.5,
+                    sampler_name='euler',
+                    scheduler='normal',
+                    positive=positive_cond,
+                    negative=negative_cond,
+                    latent={'samples': initial_latent},
+                    denoise=1.0,
+                    callback_function=callback
+                )
+                
+                progressbar(async_task, 85, 'Decoding frames...')
+                sampled_latent['samples'] = sampled_latent['samples'][:, 4:]
+                images = core.decode_vae(vae, sampled_latent)
+                images = core.pytorch_to_numpy(images)
+                
+                yield_result(async_task, list(images), 100, async_task.black_out_nsfw)
+                async_task.yields.append(['finish', async_task.results])
+            except Exception as e:
+                traceback.print_exc()
+                async_task.yields.append(['finish', async_task.results])
+            finally:
+                stop_processing(async_task, processing_start_time)
+                # Unload models to free VRAM
+                pipeline.refresh_everything(refiner_model_name=async_task.refiner_model_name, base_model_name=async_task.base_model_name, loras=async_task.loras, vae_name=async_task.vae_name)
+            return
+        # Video Pipeline End
+
         preparation_start_time = time.perf_counter()
         async_task.processing = True
 
